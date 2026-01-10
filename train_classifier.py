@@ -54,14 +54,9 @@ def train_model():
         print(f"Dataset not found at {DATASET_PATH}")
         return
 
-    # Data Transforms with Heavy Augmentation (robust against "scan to stone" domain gap)
+    # Data Transforms - Simple and accurate for clean images
     data_transforms = transforms.Compose([
         transforms.Resize(IMG_SIZE),
-        transforms.RandomGrayscale(p=0.4), # Often hieroglyphs are monocolor stone
-        transforms.ColorJitter(brightness=0.6, contrast=0.6, saturation=0.4, hue=0.1), # Simulate shadows/lighting
-        transforms.RandomAffine(degrees=15, shear=10, scale=(0.8, 1.2)), # Perspective changes
-        transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)), # Emulate erosion/blur
-        transforms.RandomHorizontalFlip(p=0.2), # Some signs can be flipped (less common but possible)
         transforms.ToTensor(), # Converts to [0, 1]
     ])
 
