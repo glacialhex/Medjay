@@ -1,0 +1,5 @@
+train: /Users/yousef/.gemini/antigravity/scratch/hieroglyphics-identifier/datasets/debug_yolo/images
+val: /Users/yousef/.gemini/antigravity/scratch/hieroglyphics-identifier/datasets/debug_yolo/images
+
+names:
+  0: glyph

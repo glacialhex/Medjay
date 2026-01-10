@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+venv/
+.env
+
+# System
+.DS_Store
+__pycache__/
+*.pyc
+
+# Datasets & Training artifacts
+datasets/
+runs/
+
+# IDE
+.vscode/
+.idea/
+
+# Build
+dist/
+build/
