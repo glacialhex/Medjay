@@ -149,7 +149,7 @@ function renderResults(predictions) {
   return demoNotice + `
     <div class="results-list">
       ${predictions.map((pred, idx) => `
-        <div class="result-item" style="animation-delay: ${idx * 0.1}s">
+        <div class="result-item" data-prediction-idx="${idx}" style="animation-delay: ${idx * 0.1}s">
           <div class="result-glyph">
             ${getHieroglyphSymbol(pred.code)}
           </div>
@@ -166,6 +166,32 @@ function renderResults(predictions) {
                 <div class="confidence-fill" style="width: ${pred.confidence * 100}%"></div>
               </div>
               <span class="confidence-text">${(pred.confidence * 100).toFixed(1)}%</span>
+            </div>
+            <div class="feedback-buttons" style="display: flex; gap: 8px; margin-top: 12px;">
+              <button class="feedback-btn correct" onclick="sendFeedback('${pred.code}', true, ${idx})" style="
+                background: rgba(40, 167, 69, 0.2);
+                border: 1px solid rgba(40, 167, 69, 0.5);
+                color: #28a745;
+                padding: 6px 12px;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 0.85rem;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+              ">✓ Correct</button>
+              <button class="feedback-btn wrong" onclick="sendFeedback('${pred.code}', false, ${idx})" style="
+                background: rgba(220, 53, 69, 0.2);
+                border: 1px solid rgba(220, 53, 69, 0.5);
+                color: #dc3545;
+                padding: 6px 12px;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 0.85rem;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+              ">✗ Wrong</button>
             </div>
           </div>
         </div>
@@ -662,6 +688,50 @@ function showNotification(message, type = 'info') {
 
   setTimeout(() => notification.remove(), 4000);
 }
+
+// Feedback storage for reinforcement learning
+let feedbackData = JSON.parse(localStorage.getItem('hieroglyphFeedback') || '[]');
+
+// Handle user feedback on predictions
+function sendFeedback(code, isCorrect, idx) {
+  const timestamp = new Date().toISOString();
+  const imageData = document.getElementById('previewImage')?.src || null;
+
+  const feedback = {
+    code,
+    isCorrect,
+    timestamp,
+    imageData: imageData ? imageData.substring(0, 100) + '...' : null // Truncate for storage
+  };
+
+  feedbackData.push(feedback);
+  localStorage.setItem('hieroglyphFeedback', JSON.stringify(feedbackData));
+
+  // Update button states to show feedback was recorded
+  const resultItem = document.querySelector(`[data-prediction-idx="${idx}"]`);
+  if (resultItem) {
+    const buttons = resultItem.querySelector('.feedback-buttons');
+    if (buttons) {
+      buttons.innerHTML = `
+        <span style="color: ${isCorrect ? '#28a745' : '#dc3545'}; font-size: 0.9rem;">
+          ${isCorrect ? '✓ Marked as correct' : '✗ Marked as wrong'} - Thank you!
+        </span>
+      `;
+    }
+  }
+
+  // Log for debugging
+  console.log('Feedback recorded:', feedback);
+  console.log('Total feedback entries:', feedbackData.length);
+
+  showNotification(
+    isCorrect ? 'Thanks! Marked as correct.' : 'Thanks! We\'ll improve this.',
+    isCorrect ? 'success' : 'info'
+  );
+}
+
+// Expose sendFeedback globally for onclick handlers
+window.sendFeedback = sendFeedback;
 
 // Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', init);
