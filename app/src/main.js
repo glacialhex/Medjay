@@ -379,12 +379,24 @@ function showPreview(src) {
   const previewArea = document.getElementById('previewArea');
   if (previewArea) {
     previewArea.innerHTML = `
-      <div class="enhance-controls">
-        <button class="enhance-btn ${isEnhanced ? 'active' : ''}" id="enhanceBtn">
-          <span>🔦</span> Enhance Details
+      <div class="enhance-controls" style="display: flex; justify-content: center; margin-bottom: 12px;">
+        <button class="enhance-btn ${isEnhanced ? 'active' : ''}" id="enhanceBtn" style="
+          background: ${isEnhanced ? 'rgba(255, 193, 7, 0.8)' : 'rgba(255, 193, 7, 0.1)'};
+          border: 1px solid rgba(255, 193, 7, 0.3);
+          color: ${isEnhanced ? '#1a1a1a' : '#ffc107'};
+          padding: 8px 16px;
+          border-radius: 20px;
+          cursor: pointer;
+          font-family: 'Outfit', sans-serif;
+          font-size: 0.9rem;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        ">
+          <span>🔦</span> Enhance for Stone
         </button>
       </div>
-      <div class="preview-container">
+      <div class="preview-container" style="margin-top: 10px; position: relative;">
         <img src="${src}" alt="Uploaded hieroglyph" class="preview-image" id="previewImage" data-original-src="${src}" />
         <button class="clear-btn" id="clearBtn">✕</button>
       </div>
@@ -393,26 +405,22 @@ function showPreview(src) {
     document.getElementById('clearBtn')?.addEventListener('click', () => {
       previewArea.innerHTML = '';
       document.getElementById('resultsArea').innerHTML = renderEmptyResults();
-      isEnhanced = false; // Reset state
+      isEnhanced = false;
     });
 
-    // Enhance button logic
-    document.getElementById('enhanceBtn')?.addEventListener('click', async (e) => {
-      const btn = e.currentTarget;
-      isEnhanced = !isEnhanced; // Toggle state
-      btn.classList.toggle('active');
+    // Enhance button - toggle and reprocess
+    document.getElementById('enhanceBtn')?.addEventListener('click', async () => {
+      isEnhanced = !isEnhanced;
+      const btn = document.getElementById('enhanceBtn');
+      btn.style.background = isEnhanced ? 'rgba(255, 193, 7, 0.8)' : 'rgba(255, 193, 7, 0.1)';
+      btn.style.color = isEnhanced ? '#1a1a1a' : '#ffc107';
 
       const img = document.getElementById('previewImage');
-      // Always reload original src before processing to avoid double-processing
       const originalSrc = img.getAttribute('data-original-src');
 
-      // Create a temp image object to load the source
+      // Reload original and reprocess
       const tempImg = new Image();
       tempImg.onload = async () => {
-        // If turning off, reset preview to original BEFORE processing (so user sees raw image)
-        if (!isEnhanced) {
-          img.src = originalSrc;
-        }
         await processImage(tempImg);
       };
       tempImg.src = originalSrc;
@@ -444,9 +452,22 @@ async function processImage(imageElement) {
   await loadDetector();
 
   try {
+    // 0. Apply enhancement if enabled (CLAHE + sharpening for stone photos)
+    let processedImage = imageElement;
+    if (isEnhanced) {
+      console.log("Applying stone enhancement (CLAHE + sharpening)...");
+      processedImage = enhanceImage(imageElement);
+
+      // Update preview to show enhanced version
+      const previewImg = document.getElementById('previewImage');
+      if (previewImg && processedImage.toDataURL) {
+        previewImg.src = processedImage.toDataURL();
+      }
+    }
+
     // 1. Run Object Detection
     console.log("Detecting glyphs...");
-    const boxes = await detectGlyphs(imageElement);
+    const boxes = await detectGlyphs(processedImage);
     console.log(`Found ${boxes.length} glyphs`);
 
     let allPredictions = [];
@@ -458,7 +479,7 @@ async function processImage(imageElement) {
       // 3. Classify each detected glyph
       for (const box of boxes) {
         // Crop the glyph
-        const crop = cropImage(imageElement, box);
+        const crop = cropImage(processedImage, box);
 
         // Classify the crop
         const glyphResults = await classifyImage(crop);
@@ -470,9 +491,9 @@ async function processImage(imageElement) {
         });
       }
     } else {
-      // Fallback: Classify entire image if no specific glyphs detected (e.g. single icon)
+      // Fallback: Classify entire image if no specific glyphs detected
       console.log("No boxes detected, classifying full image");
-      const glyphResults = await classifyImage(imageElement);
+      const glyphResults = await classifyImage(processedImage);
       allPredictions = glyphResults.map(r => ({ box: null, ...r }));
     }
 
