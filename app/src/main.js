@@ -63,16 +63,6 @@ function renderApp() {
       </section>
     </main>
     
-    <section class="card" style="max-width: 1400px; margin: 40px auto;">
-      <div class="card-header">
-        <div class="card-icon">📊</div>
-        <h2 class="card-title">Dataset & Setup Information</h2>
-      </div>
-      <div id="datasetInfo">
-        ${renderDatasetInfo()}
-      </div>
-    </section>
-    
     <footer class="footer">
       <p>Built with TensorFlow.js • Trained on Glyphnet dataset • <a href="https://github.com/GAIA-IFAC-CNR/Glyphnet" target="_blank">View Research</a></p>
       <p style="margin-top: 8px; font-size: 0.85rem;">Based on the Gardiner Sign List classification system</p>
@@ -432,6 +422,12 @@ function showPreview(src) {
       previewArea.innerHTML = '';
       document.getElementById('resultsArea').innerHTML = renderEmptyResults();
       isEnhanced = false;
+
+      // Show upload area again
+      const uploadArea = document.getElementById('uploadArea');
+      if (uploadArea) {
+        uploadArea.style.display = 'block';
+      }
     });
 
     // Enhance button - toggle and reprocess
@@ -691,47 +687,208 @@ function showNotification(message, type = 'info') {
 
 // Feedback storage for reinforcement learning
 let feedbackData = JSON.parse(localStorage.getItem('hieroglyphFeedback') || '[]');
+let correctionData = JSON.parse(localStorage.getItem('hieroglyphCorrections') || '[]');
 
 // Handle user feedback on predictions
 function sendFeedback(code, isCorrect, idx) {
+  if (isCorrect) {
+    // Save positive feedback
+    saveFeedback(code, true, null, idx);
+  } else {
+    // Show correction dialog
+    showCorrectionDialog(code, idx);
+  }
+}
+
+// Save feedback to localStorage
+function saveFeedback(predictedCode, isCorrect, correctCode, idx) {
   const timestamp = new Date().toISOString();
   const imageData = document.getElementById('previewImage')?.src || null;
 
   const feedback = {
-    code,
+    predictedCode,
     isCorrect,
+    correctCode: correctCode || null,
     timestamp,
-    imageData: imageData ? imageData.substring(0, 100) + '...' : null // Truncate for storage
+    imageData: imageData ? imageData.substring(0, 200) + '...' : null
   };
 
-  feedbackData.push(feedback);
-  localStorage.setItem('hieroglyphFeedback', JSON.stringify(feedbackData));
+  if (isCorrect) {
+    feedbackData.push(feedback);
+    localStorage.setItem('hieroglyphFeedback', JSON.stringify(feedbackData));
+  } else {
+    correctionData.push(feedback);
+    localStorage.setItem('hieroglyphCorrections', JSON.stringify(correctionData));
+  }
 
-  // Update button states to show feedback was recorded
+  // Update button states
   const resultItem = document.querySelector(`[data-prediction-idx="${idx}"]`);
   if (resultItem) {
     const buttons = resultItem.querySelector('.feedback-buttons');
     if (buttons) {
-      buttons.innerHTML = `
-        <span style="color: ${isCorrect ? '#28a745' : '#dc3545'}; font-size: 0.9rem;">
-          ${isCorrect ? '✓ Marked as correct' : '✗ Marked as wrong'} - Thank you!
-        </span>
-      `;
+      if (isCorrect) {
+        buttons.innerHTML = `<span style="color: #28a745; font-size: 0.9rem;">✓ Confirmed correct - Thank you!</span>`;
+      } else if (correctCode) {
+        const signInfo = gardinerSigns[correctCode] || { name: correctCode };
+        buttons.innerHTML = `<span style="color: #ffc107; font-size: 0.9rem;">📝 Corrected to ${signInfo.name} (${correctCode})</span>`;
+      }
     }
   }
 
-  // Log for debugging
-  console.log('Feedback recorded:', feedback);
-  console.log('Total feedback entries:', feedbackData.length);
+  console.log('Feedback saved:', feedback);
+  console.log('Total corrections:', correctionData.length);
 
   showNotification(
-    isCorrect ? 'Thanks! Marked as correct.' : 'Thanks! We\'ll improve this.',
+    isCorrect ? 'Thanks! Confirmed as correct.' : `Correction saved: ${correctCode}`,
     isCorrect ? 'success' : 'info'
   );
 }
 
-// Expose sendFeedback globally for onclick handlers
+// Show correction dialog with glyph picker
+function showCorrectionDialog(wrongCode, idx) {
+  // Create modal overlay
+  const modal = document.createElement('div');
+  modal.id = 'correctionModal';
+  modal.style.cssText = `
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.8); z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+  `;
+
+  // Get some common glyphs for quick selection
+  const commonGlyphs = ['A1', 'D21', 'G1', 'G17', 'G43', 'M17', 'N35', 'Q3', 'X1', 'Y1', 'Z1'];
+
+  modal.innerHTML = `
+    <div style="
+      background: linear-gradient(135deg, #1a1a2e 0%, #0f0f1a 100%);
+      border: 1px solid rgba(201, 162, 39, 0.3);
+      border-radius: 16px;
+      padding: 24px;
+      max-width: 500px;
+      width: 90%;
+      max-height: 80vh;
+      overflow-y: auto;
+    ">
+      <h3 style="color: #c9a227; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+        📝 What is the correct hieroglyph?
+      </h3>
+      <p style="color: rgba(255,255,255,0.7); margin-bottom: 16px; font-size: 0.9rem;">
+        You marked <strong style="color: #dc3545;">${wrongCode}</strong> as incorrect. 
+        Please select or search for the correct glyph:
+      </p>
+      
+      <div style="margin-bottom: 16px;">
+        <input type="text" id="glyphSearch" placeholder="Search by code (e.g. A1, D21) or name..." 
+          style="
+            width: 100%; padding: 12px; border-radius: 8px;
+            background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+            color: white; font-size: 1rem;
+          "
+        />
+      </div>
+      
+      <div id="searchResults" style="
+        max-height: 200px; overflow-y: auto; margin-bottom: 16px;
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px;
+      ">
+        ${commonGlyphs.map(code => {
+    const sign = gardinerSigns[code] || { name: code };
+    return `
+            <button onclick="selectCorrection('${code}', ${idx})" style="
+              background: rgba(201, 162, 39, 0.1); border: 1px solid rgba(201, 162, 39, 0.3);
+              border-radius: 8px; padding: 8px; cursor: pointer; color: #c9a227;
+              text-align: center; font-size: 0.8rem;
+            ">
+              <div style="font-size: 1.2rem;">${getHieroglyphSymbol(code)}</div>
+              <div>${code}</div>
+            </button>
+          `;
+  }).join('')}
+      </div>
+      
+      <div style="display: flex; gap: 12px; justify-content: flex-end;">
+        <button onclick="document.getElementById('correctionModal').remove()" style="
+          background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+          color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer;
+        ">Cancel</button>
+        <button onclick="selectCorrection('unknown', ${idx})" style="
+          background: rgba(201, 162, 39, 0.2); border: 1px solid rgba(201, 162, 39, 0.5);
+          color: #c9a227; padding: 10px 20px; border-radius: 8px; cursor: pointer;
+        ">I don't know</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  // Setup search functionality
+  const searchInput = document.getElementById('glyphSearch');
+  const resultsDiv = document.getElementById('searchResults');
+
+  searchInput.focus();
+  searchInput.addEventListener('input', (e) => {
+    const query = e.target.value.toLowerCase();
+    if (query.length < 1) {
+      // Show common glyphs
+      resultsDiv.innerHTML = commonGlyphs.map(code => {
+        const sign = gardinerSigns[code] || { name: code };
+        return `
+          <button onclick="selectCorrection('${code}', ${idx})" style="
+            background: rgba(201, 162, 39, 0.1); border: 1px solid rgba(201, 162, 39, 0.3);
+            border-radius: 8px; padding: 8px; cursor: pointer; color: #c9a227;
+            text-align: center; font-size: 0.8rem;
+          ">
+            <div style="font-size: 1.2rem;">${getHieroglyphSymbol(code)}</div>
+            <div>${code}</div>
+          </button>
+        `;
+      }).join('');
+      return;
+    }
+
+    // Search in gardinerSigns
+    const matches = Object.entries(gardinerSigns)
+      .filter(([code, sign]) =>
+        code.toLowerCase().includes(query) ||
+        sign.name?.toLowerCase().includes(query) ||
+        sign.meaning?.toLowerCase().includes(query)
+      )
+      .slice(0, 12);
+
+    if (matches.length === 0) {
+      resultsDiv.innerHTML = '<p style="color: rgba(255,255,255,0.5); grid-column: 1/-1;">No matches found</p>';
+      return;
+    }
+
+    resultsDiv.innerHTML = matches.map(([code, sign]) => `
+      <button onclick="selectCorrection('${code}', ${idx})" style="
+        background: rgba(201, 162, 39, 0.1); border: 1px solid rgba(201, 162, 39, 0.3);
+        border-radius: 8px; padding: 8px; cursor: pointer; color: #c9a227;
+        text-align: center; font-size: 0.8rem;
+      ">
+        <div style="font-size: 1.2rem;">${getHieroglyphSymbol(code)}</div>
+        <div>${code}</div>
+        <div style="font-size: 0.7rem; color: rgba(255,255,255,0.5);">${sign.name || ''}</div>
+      </button>
+    `).join('');
+  });
+}
+
+// Handle correction selection
+function selectCorrection(correctCode, idx) {
+  document.getElementById('correctionModal')?.remove();
+
+  // Get the wrong code from the result item
+  const resultItem = document.querySelector(`[data-prediction-idx="${idx}"]`);
+  const wrongCode = resultItem?.querySelector('.result-code')?.textContent?.replace('Gardiner Code: ', '') || 'unknown';
+
+  saveFeedback(wrongCode, false, correctCode, idx);
+}
+
+// Expose functions globally
 window.sendFeedback = sendFeedback;
+window.selectCorrection = selectCorrection;
+window.getHieroglyphSymbol = getHieroglyphSymbol;
 
 // Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', init);

@@ -118,7 +118,10 @@ export async function classifyImage(imageElement) {
 
         // Get output
         const output = results.output; // 'output' matches the ONNX export output name
-        const probabilities = softmax(Array.from(output.data));
+        let probabilities = softmax(Array.from(output.data));
+
+        // Apply pseudo-reinforcement: adjust probabilities based on correction history
+        probabilities = applyReinforcementLearning(probabilities);
 
         // Get top 5 predictions
         const predictions = probabilities
@@ -147,6 +150,65 @@ export async function classifyImage(imageElement) {
         alert(`Inference failed: ${e.message}`);
         throw e;
     }
+}
+
+/**
+ * Apply pseudo-reinforcement learning based on user corrections
+ * Adjusts probabilities to favor correct codes and penalize wrong ones
+ */
+function applyReinforcementLearning(probabilities) {
+    // Load correction history from localStorage
+    const corrections = JSON.parse(localStorage.getItem('hieroglyphCorrections') || '[]');
+    const confirmations = JSON.parse(localStorage.getItem('hieroglyphFeedback') || '[]');
+
+    if (corrections.length === 0 && confirmations.length === 0) {
+        return probabilities; // No history, return unchanged
+    }
+
+    // Build adjustment map: code -> adjustment factor
+    const adjustments = {};
+
+    // Learn from corrections: boost correct codes, penalize wrong ones
+    corrections.forEach(c => {
+        if (c.correctCode && c.correctCode !== 'unknown') {
+            // Boost the correct answer
+            const correctIdx = classLabels.indexOf(c.correctCode);
+            if (correctIdx !== -1) {
+                adjustments[correctIdx] = (adjustments[correctIdx] || 1) * 1.3; // 30% boost per correction
+            }
+        }
+        if (c.predictedCode) {
+            // Penalize the wrong prediction
+            const wrongIdx = classLabels.indexOf(c.predictedCode);
+            if (wrongIdx !== -1) {
+                adjustments[wrongIdx] = (adjustments[wrongIdx] || 1) * 0.7; // 30% penalty per correction
+            }
+        }
+    });
+
+    // Learn from confirmations: boost confirmed codes
+    confirmations.forEach(c => {
+        if (c.isCorrect && c.predictedCode) {
+            const confirmedIdx = classLabels.indexOf(c.predictedCode);
+            if (confirmedIdx !== -1) {
+                adjustments[confirmedIdx] = (adjustments[confirmedIdx] || 1) * 1.1; // 10% boost per confirmation
+            }
+        }
+    });
+
+    // Apply adjustments
+    const adjusted = probabilities.map((p, idx) => {
+        const factor = adjustments[idx] || 1;
+        return p * factor;
+    });
+
+    // Re-normalize to sum to 1
+    const sum = adjusted.reduce((a, b) => a + b, 0);
+    const normalized = adjusted.map(p => p / sum);
+
+    console.log('Applied reinforcement learning:', Object.keys(adjustments).length, 'adjustments');
+
+    return normalized;
 }
 
 /**
