@@ -8,7 +8,7 @@ import json
 import torch.onnx
 
 # Configuration
-DATASET_PATH = 'datasets/Egyptian_hieroglyphs/Dataset/train'
+DATASET_PATH = 'datasets/Combined_Hieroglyphs/train'
 IMG_SIZE = (100, 100)
 BATCH_SIZE = 32
 EPOCHS = 10
