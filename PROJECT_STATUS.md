@@ -71,7 +71,7 @@ Browser-based Egyptian hieroglyph recognition system using YOLO (detection) + CN
 1. **Combined Dataset**: 
    - Egyptian_hieroglyphs (4,210 images, 171 classes)
    - Glyphnet subset (used for YOLO)
-   - **Total**: 3,584 images, 170 classes
+   - **Total**: 17,716 images, 171 classes (FIXED - was 3,584)
 2. **Latest Model Performance**:
    - Classifier: 87.45% validation accuracy
    - YOLO: mAP50 = 0.60 (stone-trained)
@@ -112,9 +112,10 @@ Browser-based Egyptian hieroglyph recognition system using YOLO (detection) + CN
    - Stone texture interferes with bounding box detection
    - Multi-scale detection not implemented
 
-3. **Training Data Quality Issues**
-   - Combined dataset has only 3,584 images (should have ~20k+)
-   - Glyphnet has 17,379 images but wasn't properly integrated
+3. **~~Training Data Quality Issues~~** (FIXED)
+   - ~~Combined dataset has only 3,584 images (should have ~20k+)~~
+   - Now: 17,716 images combined properly
+   - ~~Glyphnet has 17,379 images but wasn't properly integrated~~
    - Class imbalance likely (some glyphs have <10 examples)
 
 ### ⚠️ Medium Issues
@@ -232,7 +233,7 @@ hieroglyphics-identifier/
 ├── datasets/
 │   ├── Egyptian_hieroglyphs/       # 4,210 images (downloaded)
 │   ├── Glyphnet/                   # 17,379 images (not fully integrated)
-│   ├── Combined_Hieroglyphs/       # 3,584 images (CURRENT TRAINING SET)
+│   ├── Combined_Hieroglyphs/       # 17,716 images (FIXED - was 3,584)
 │   └── hieroglyph-yolo-dataset/    # YOLO bounding boxes
 ├── runs/                           # Training outputs
 │   └── detect/
@@ -262,10 +263,10 @@ hieroglyphics-identifier/
 - Dataset size is too small (3.5k vs needed 20k+)
 
 ### Biggest Bottleneck
-**Not enough high-quality training data**
-- Current: 3,584 images (only 21 images/class on average)
-- Need: 20,000+ images (117+ images/class)
-- Glyphnet has 17k but wasn't properly combined
+**FIXED**: Dataset now has 17,716 images (was 3,584)
+- Previous: 3,584 images (only 21 images/class on average)
+- Now: 17,716 images (103+ images/class average)
+- Next step: Retrain with `python3 train_classifier.py`
 
 ### Quick Wins
 1. **Fix combine_datasets.py** to use all of Glyphnet → instant 6x data increase
@@ -320,8 +321,8 @@ cp runs/detect/trainX/weights/best.onnx app/public/yolov8_model.onnx
 ## Recommendations
 
 ### Immediate (Do First)
-1. Fix `combine_datasets.py` to properly merge Glyphnet
-2. Retrain with full 21k dataset
+1. ~~Fix `combine_datasets.py` to properly merge Glyphnet~~ ✅ DONE (17,716 images now)
+2. Retrain with full 21k dataset: `python3 train_classifier.py`
 3. Add validation split logging (per-class accuracy)
 
 ### Short-Term (Next Session)
@@ -348,9 +349,9 @@ cp runs/detect/trainX/weights/best.onnx app/public/yolov8_model.onnx
 - `app/public/hieroglyph_model.onnx` - 38MB, 170 classes, 87% val acc
 - `app/public/yolov8_model.onnx` - 11.7MB, train7 (not stone version)
 
-**Critical Bug**: `combine_datasets.py` line 13 - `GLYPHNET` path points to wrong directory, should be:
+**Critical Bug ~~Found~~ FIXED**: `combine_datasets.py` line 11 - `GLYPHNET` path has been corrected:
 ```python
-GLYPHNET = Path("datasets/Glyphnet/Automated_extracted")  # Not /Automated
+GLYPHNET = Path("datasets/Glyphnet/Automated_extracted")  # Fixed - was /Automated_extracted/Automated
 ```
 
 **User Feedback**: "huge error margin" - indicates 87% is not enough, aim for 95%+
