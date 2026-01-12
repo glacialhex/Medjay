@@ -50,13 +50,13 @@ export async function loadModel() {
 }
 
 /**
- * Preprocess image for the model
- * Expects 100x100 RGB image
- * Returns Float32Array [1, 3, 100, 100] normalized 0-1
+ * Preprocess image for the ResNet18 model
+ * Expects 224x224 RGB image with ImageNet normalization
+ * Returns Float32Array [1, 3, 224, 224] 
  */
 function preprocessImage(imageElement) {
-    const width = 100;
-    const height = 100;
+    const width = 224;
+    const height = 224;
 
     // Create a temporary canvas to resize and get pixel data
     const canvas = document.createElement('canvas');
@@ -70,14 +70,18 @@ function preprocessImage(imageElement) {
     const imageData = ctx.getImageData(0, 0, width, height);
     const { data } = imageData;
 
-    // Convert to float32 and rearrange to NCHW [1, 3, 100, 100]
+    // ImageNet normalization values
+    const mean = [0.485, 0.456, 0.406];
+    const std = [0.229, 0.224, 0.225];
+
+    // Convert to float32 and rearrange to NCHW [1, 3, 224, 224]
     const float32Data = new Float32Array(1 * 3 * width * height);
 
     for (let i = 0; i < width * height; i++) {
-        // Normalize 0-255 -> 0.0-1.0
-        const r = data[i * 4] / 255.0;
-        const g = data[i * 4 + 1] / 255.0;
-        const b = data[i * 4 + 2] / 255.0;
+        // Normalize 0-255 -> 0.0-1.0, then apply ImageNet normalization
+        const r = (data[i * 4] / 255.0 - mean[0]) / std[0];
+        const g = (data[i * 4 + 1] / 255.0 - mean[1]) / std[1];
+        const b = (data[i * 4 + 2] / 255.0 - mean[2]) / std[2];
 
         // Fill tensor data (Planar format: RRR...GGG...BBB...)
         float32Data[i] = r;

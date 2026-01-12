@@ -1,111 +1,146 @@
+"""
+ResNet18-based Hieroglyph Classifier with Transfer Learning
+Uses pre-trained ImageNet weights and class-weighted loss for imbalanced data
+"""
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision
-from torchvision import datasets, transforms
+from torchvision import datasets, transforms, models
+from torch.optim.lr_scheduler import StepLR
 import os
 import json
-import torch.onnx
+import numpy as np
+from collections import Counter
 
 # Configuration
 DATASET_PATH = 'datasets/Combined_Hieroglyphs/train'
-IMG_SIZE = (100, 100)
+IMG_SIZE = (224, 224)  # ResNet expects 224x224
 BATCH_SIZE = 32
-EPOCHS = 20  # Increased for augmented training
+EPOCHS = 30
 MODEL_SAVE_PATH = 'app/public/hieroglyph_model.onnx'
 LABELS_SAVE_PATH = 'app/src/model_labels.json'
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# Define a simple CNN Model
-class SimpleCNN(nn.Module):
-    def __init__(self, num_classes):
-        super(SimpleCNN, self).__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-            
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-            
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2)
-        )
-        self.classifier = nn.Sequential(
-            nn.Dropout(0.5),
-            nn.Linear(128 * 12 * 12, 512), # 100x100 -> 50 -> 25 -> 12.5 (12)
-            nn.ReLU(),
-            nn.Linear(512, num_classes)
-        )
+def create_resnet_model(num_classes):
+    """Create ResNet18 with pre-trained weights, replace final layer"""
+    model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+    
+    # Freeze early layers (keep pre-trained features)
+    for param in list(model.parameters())[:-20]:  # Freeze all but last few layers
+        param.requires_grad = False
+    
+    # Replace final fully connected layer
+    num_ftrs = model.fc.in_features
+    model.fc = nn.Sequential(
+        nn.Dropout(0.3),
+        nn.Linear(num_ftrs, num_classes)
+    )
+    return model
 
-    def forward(self, x):
-        x = self.features(x)
-        x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        return x
+def compute_class_weights(dataset):
+    """Compute class weights inversely proportional to frequency"""
+    targets = [dataset.targets[i] for i in range(len(dataset))]
+    class_counts = Counter(targets)
+    total = len(targets)
+    num_classes = len(class_counts)
+    
+    # Inverse frequency with smoothing
+    weights = []
+    for i in range(num_classes):
+        count = class_counts.get(i, 1)
+        # Use sqrt for less aggressive weighting
+        weight = np.sqrt(total / (num_classes * count))
+        weights.append(weight)
+    
+    # Normalize weights
+    weights = np.array(weights)
+    weights = weights / weights.mean()
+    
+    print(f"Class weight range: {weights.min():.2f} to {weights.max():.2f}")
+    return torch.FloatTensor(weights)
 
 def train_model():
-    print(f"Using device: {'cpu'}") # Force CPU for simplicity/compatibility on this env if unsure of MPS support
-    device = torch.device('cpu') 
-
-    # Check data
+    print(f"Using device: {DEVICE}")
+    
     if not os.path.exists(DATASET_PATH):
         print(f"Dataset not found at {DATASET_PATH}")
         return
-
-    # Data Transforms - With MILD augmentation to handle real-world degraded images
-    # Key: augmentation should be enough to generalize, but not destroy the signal
+    
+    # Data Transforms - ResNet expects normalized 224x224 RGB
+    # Use ImageNet normalization 
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+    
     train_transforms = transforms.Compose([
         transforms.Resize(IMG_SIZE),
-        transforms.RandomRotation(10),  # Reduced from 15
-        transforms.RandomAffine(degrees=0, translate=(0.05, 0.05), scale=(0.95, 1.05)),  # Reduced
-        transforms.ColorJitter(brightness=0.2, contrast=0.3, saturation=0.1),  # Reduced
-        transforms.RandomApply([transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.0))], p=0.3),  # Only 30% of time
+        transforms.RandomRotation(15),
+        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2),
+        transforms.RandomHorizontalFlip(p=0.1),  # Some glyphs may be symmetric
         transforms.ToTensor(),
+        normalize,
     ])
     
     val_transforms = transforms.Compose([
         transforms.Resize(IMG_SIZE),
         transforms.ToTensor(),
+        normalize,
     ])
-
-    # Load Dataset - create two separate datasets with different transforms
-    # First get class names from a base dataset
-    base_dataset = datasets.ImageFolder(DATASET_PATH, transform=val_transforms)
-    class_names = base_dataset.classes
-    print(f"Found {len(class_names)} classes.")
+    
+    # Load full dataset to get class info and compute weights
+    full_dataset = datasets.ImageFolder(DATASET_PATH, transform=val_transforms)
+    class_names = full_dataset.classes
+    num_classes = len(class_names)
+    print(f"Found {num_classes} classes.")
     
     # Save labels
     with open(LABELS_SAVE_PATH, 'w') as f:
         json.dump(class_names, f)
     print(f"Saved labels to {LABELS_SAVE_PATH}")
-
-    # Split indices first, then create datasets with appropriate transforms
-    total_size = len(base_dataset)
+    
+    # Compute class weights for imbalanced data
+    class_weights = compute_class_weights(full_dataset).to(DEVICE)
+    
+    # Split indices
+    total_size = len(full_dataset)
     train_size = int(0.8 * total_size)
     val_size = total_size - train_size
     
-    # Get random indices
     indices = torch.randperm(total_size).tolist()
     train_indices = indices[:train_size]
     val_indices = indices[train_size:]
     
-    # Create augmented training dataset
-    train_full_dataset = datasets.ImageFolder(DATASET_PATH, transform=train_transforms)
-    train_dataset = torch.utils.data.Subset(train_full_dataset, train_indices)
-    val_dataset = torch.utils.data.Subset(base_dataset, val_indices)
-
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
-
-    # Initialize Model
-    model = SimpleCNN(num_classes=len(class_names)).to(device)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
-
-    # Training Loop
+    # Create datasets with different transforms
+    train_full = datasets.ImageFolder(DATASET_PATH, transform=train_transforms)
+    train_dataset = torch.utils.data.Subset(train_full, train_indices)
+    val_dataset = torch.utils.data.Subset(full_dataset, val_indices)
+    
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, 
+                                                shuffle=True, num_workers=0)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=BATCH_SIZE, 
+                                              shuffle=False, num_workers=0)
+    
+    # Create model
+    model = create_resnet_model(num_classes).to(DEVICE)
+    print(f"Model: ResNet18 with {sum(p.numel() for p in model.parameters() if p.requires_grad):,} trainable parameters")
+    
+    # Weighted cross-entropy loss
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    
+    # Optimizer - different learning rates for pretrained vs new layers
+    optimizer = optim.AdamW([
+        {'params': model.fc.parameters(), 'lr': 1e-3},  # New layers learn faster
+        {'params': [p for n, p in model.named_parameters() if 'fc' not in n and p.requires_grad], 'lr': 1e-4}
+    ])
+    
+    scheduler = StepLR(optimizer, step_size=10, gamma=0.5)
+    
+    # Training loop
     print("Starting training...")
+    best_val_acc = 0
+    
     for epoch in range(EPOCHS):
         model.train()
         running_loss = 0.0
@@ -113,7 +148,7 @@ def train_model():
         total = 0
         
         for inputs, labels in train_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
+            inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
             
             optimizer.zero_grad()
             outputs = model(inputs)
@@ -125,44 +160,88 @@ def train_model():
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
-            
+        
         epoch_acc = 100 * correct / total
         print(f"Epoch {epoch+1}/{EPOCHS} - Loss: {running_loss/len(train_loader):.4f} - Acc: {epoch_acc:.2f}%")
-
+        
         # Validation
         model.eval()
         val_correct = 0
         val_total = 0
+        per_class_correct = {}
+        per_class_total = {}
+        
         with torch.no_grad():
             for inputs, labels in val_loader:
-                inputs, labels = inputs.to(device), labels.to(device)
+                inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
                 outputs = model(inputs)
                 _, predicted = torch.max(outputs.data, 1)
                 val_total += labels.size(0)
                 val_correct += (predicted == labels).sum().item()
+                
+                # Track per-class accuracy
+                for pred, label in zip(predicted.cpu().numpy(), labels.cpu().numpy()):
+                    if label not in per_class_total:
+                        per_class_total[label] = 0
+                        per_class_correct[label] = 0
+                    per_class_total[label] += 1
+                    if pred == label:
+                        per_class_correct[label] += 1
         
         val_acc = 100 * val_correct / val_total
         print(f"Validation Acc: {val_acc:.2f}%")
-
+        
+        # Track worst performing classes
+        if epoch == EPOCHS - 1 or val_acc > best_val_acc:
+            worst_classes = []
+            for class_idx in per_class_total:
+                acc = 100 * per_class_correct[class_idx] / per_class_total[class_idx]
+                if acc < 50:  # Flag classes under 50%
+                    worst_classes.append((class_names[class_idx], acc, per_class_total[class_idx]))
+            
+            if worst_classes:
+                worst_classes.sort(key=lambda x: x[1])
+                print(f"  Worst classes (epoch {epoch+1}):")
+                for name, acc, count in worst_classes[:5]:
+                    print(f"    {name}: {acc:.0f}% ({count} samples)")
+        
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            # Save best model checkpoint
+            torch.save(model.state_dict(), 'best_model.pth')
+        
+        scheduler.step()
+    
+    print(f"\nBest validation accuracy: {best_val_acc:.2f}%")
+    
+    # Load best model for export
+    model.load_state_dict(torch.load('best_model.pth'))
+    
     # Export to ONNX
     print("Exporting to ONNX...")
     model.eval()
-    dummy_input = torch.randn(1, 3, 100, 100, device=device)
+    model.to('cpu')  # Export on CPU for compatibility
+    dummy_input = torch.randn(1, 3, 224, 224)
     
-    # Create public dir if not exists
     os.makedirs(os.path.dirname(MODEL_SAVE_PATH), exist_ok=True)
     
-    torch.onnx.export(model, 
-                      dummy_input, 
-                      MODEL_SAVE_PATH, 
-                      export_params=True,
-                      opset_version=12,
-                      do_constant_folding=True,
-                      input_names=['input'],
-                      output_names=['output'],
-                      dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}})
+    torch.onnx.export(
+        model,
+        dummy_input,
+        MODEL_SAVE_PATH,
+        export_params=True,
+        opset_version=12,
+        do_constant_folding=True,
+        input_names=['input'],
+        output_names=['output'],
+        dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
+    )
     
     print(f"Model saved to {MODEL_SAVE_PATH}")
+    
+    # Cleanup
+    if os.path.exists('best_model.pth'):
+        os.remove('best_model.pth')
 
 if __name__ == '__main__':
     train_model()
