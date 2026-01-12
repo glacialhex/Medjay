@@ -161,3 +161,148 @@ function applySharpen(canvas, amount) {
     ctx.putImageData(dst, 0, 0);
     return canvas;
 }
+
+/**
+ * Extract edges from image - makes it shadow-invariant
+ * Converts stone photos into clean edge maps similar to training data
+ * @param {HTMLCanvasElement|HTMLImageElement} source - The source image
+ * @returns {HTMLCanvasElement} - Edge map canvas
+ */
+export function extractEdges(source) {
+    const canvas = document.createElement('canvas');
+    canvas.width = source.width || source.naturalWidth;
+    canvas.height = source.height || source.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(source, 0, 0);
+
+    const w = canvas.width;
+    const h = canvas.height;
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const data = imageData.data;
+
+    // 1. Convert to grayscale
+    const gray = new Float32Array(w * h);
+    for (let i = 0; i < data.length; i += 4) {
+        gray[i / 4] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    }
+
+    // 2. Apply Gaussian blur (3x3) to reduce noise
+    const blurred = new Float32Array(w * h);
+    const gaussKernel = [1, 2, 1, 2, 4, 2, 1, 2, 1];
+    const gaussSum = 16;
+
+    for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+            let sum = 0;
+            let ki = 0;
+            for (let ky = -1; ky <= 1; ky++) {
+                for (let kx = -1; kx <= 1; kx++) {
+                    sum += gray[(y + ky) * w + (x + kx)] * gaussKernel[ki++];
+                }
+            }
+            blurred[y * w + x] = sum / gaussSum;
+        }
+    }
+
+    // 3. Sobel edge detection (gradient magnitude)
+    const edges = new Float32Array(w * h);
+    let maxEdge = 0;
+
+    // Sobel kernels
+    const sobelX = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
+    const sobelY = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
+
+    for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+            let gx = 0, gy = 0;
+            let ki = 0;
+            for (let ky = -1; ky <= 1; ky++) {
+                for (let kx = -1; kx <= 1; kx++) {
+                    const val = blurred[(y + ky) * w + (x + kx)];
+                    gx += val * sobelX[ki];
+                    gy += val * sobelY[ki];
+                    ki++;
+                }
+            }
+            const magnitude = Math.sqrt(gx * gx + gy * gy);
+            edges[y * w + x] = magnitude;
+            if (magnitude > maxEdge) maxEdge = magnitude;
+        }
+    }
+
+    // 4. Normalize and threshold edges
+    // Use adaptive threshold based on mean edge strength
+    let edgeSum = 0;
+    for (let i = 0; i < edges.length; i++) edgeSum += edges[i];
+    const meanEdge = edgeSum / edges.length;
+    const threshold = meanEdge * 1.5; // Edges above 1.5x mean are significant
+
+    // 5. Create output: dark glyphs on light background (like training data)
+    for (let i = 0; i < edges.length; i++) {
+        const normalized = maxEdge > 0 ? (edges[i] / maxEdge) * 255 : 0;
+        // Invert: strong edges become dark (like hieroglyph strokes)
+        const value = edges[i] > threshold ? 50 : 200; // Binary-ish with some gradient
+        const idx = i * 4;
+        data[idx] = value;
+        data[idx + 1] = value;
+        data[idx + 2] = value;
+        data[idx + 3] = 255;
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+
+    // 6. Apply morphological closing (dilate then erode) to connect edges
+    return morphClose(canvas, 1);
+}
+
+/**
+ * Morphological close operation (dilate then erode)
+ * Helps connect broken edges from carved hieroglyphs
+ */
+function morphClose(canvas, radius) {
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width;
+    const h = canvas.height;
+    const src = ctx.getImageData(0, 0, w, h);
+    const dilated = ctx.createImageData(w, h);
+    const closed = ctx.createImageData(w, h);
+
+    // Dilate (take minimum - since our edges are dark)
+    for (let y = radius; y < h - radius; y++) {
+        for (let x = radius; x < w - radius; x++) {
+            let minVal = 255;
+            for (let ky = -radius; ky <= radius; ky++) {
+                for (let kx = -radius; kx <= radius; kx++) {
+                    const idx = ((y + ky) * w + (x + kx)) * 4;
+                    if (src.data[idx] < minVal) minVal = src.data[idx];
+                }
+            }
+            const dstIdx = (y * w + x) * 4;
+            dilated.data[dstIdx] = minVal;
+            dilated.data[dstIdx + 1] = minVal;
+            dilated.data[dstIdx + 2] = minVal;
+            dilated.data[dstIdx + 3] = 255;
+        }
+    }
+
+    // Erode (take maximum)
+    for (let y = radius; y < h - radius; y++) {
+        for (let x = radius; x < w - radius; x++) {
+            let maxVal = 0;
+            for (let ky = -radius; ky <= radius; ky++) {
+                for (let kx = -radius; kx <= radius; kx++) {
+                    const idx = ((y + ky) * w + (x + kx)) * 4;
+                    if (dilated.data[idx] > maxVal) maxVal = dilated.data[idx];
+                }
+            }
+            const dstIdx = (y * w + x) * 4;
+            closed.data[dstIdx] = maxVal;
+            closed.data[dstIdx + 1] = maxVal;
+            closed.data[dstIdx + 2] = maxVal;
+            closed.data[dstIdx + 3] = 255;
+        }
+    }
+
+    ctx.putImageData(closed, 0, 0);
+    return canvas;
+}

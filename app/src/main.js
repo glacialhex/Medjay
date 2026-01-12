@@ -2,11 +2,12 @@ import './style.css';
 import { classifyImage, loadModel, getModelStatus, isModelDemo } from './classifier';
 import { gardinerSigns, categories, searchSigns } from './gardinerSigns';
 import { detectGlyphs, loadDetector } from './detector';
-import { enhanceImage } from './imageProcessor';
+import { enhanceImage, extractEdges } from './imageProcessor';
 
 // App state
 let currentMode = 'upload'; // 'upload' or 'camera'
 let isEnhanced = false;
+let isEdgeMode = false; // Edge detection for stone photos
 let cameraStream = null;
 let isProcessing = false;
 let animationFrameId = null;
@@ -22,10 +23,10 @@ function renderApp() {
   document.querySelector('#app').innerHTML = `
     <header class="header">
       <div class="logo">
-        <span class="logo-icon">𓂀</span>
-        <h1 class="title">Hieroglyphics Identifier</h1>
+        <span class="logo-icon">𓇼</span>
+        <h1 class="title">Medjay</h1>
       </div>
-      <p class="subtitle">AI-powered Ancient Egyptian hieroglyph recognition using the Gardiner Sign List</p>
+      <p class="subtitle">AI-powered Ancient Egyptian hieroglyph recognition</p>
     </header>
     
     <main class="main-container">
@@ -395,7 +396,7 @@ function showPreview(src) {
   const previewArea = document.getElementById('previewArea');
   if (previewArea) {
     previewArea.innerHTML = `
-      <div class="enhance-controls" style="display: flex; justify-content: center; margin-bottom: 12px;">
+      <div class="enhance-controls" style="display: flex; justify-content: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;">
         <button class="enhance-btn ${isEnhanced ? 'active' : ''}" id="enhanceBtn" style="
           background: ${isEnhanced ? 'rgba(255, 193, 7, 0.8)' : 'rgba(255, 193, 7, 0.1)'};
           border: 1px solid rgba(255, 193, 7, 0.3);
@@ -409,7 +410,22 @@ function showPreview(src) {
           align-items: center;
           gap: 8px;
         ">
-          <span>🔦</span> Enhance for Stone
+          <span>🔦</span> Enhance
+        </button>
+        <button class="edge-btn ${isEdgeMode ? 'active' : ''}" id="edgeModeBtn" style="
+          background: ${isEdgeMode ? 'rgba(64, 224, 208, 0.8)' : 'rgba(64, 224, 208, 0.1)'};
+          border: 1px solid rgba(64, 224, 208, 0.3);
+          color: ${isEdgeMode ? '#1a1a1a' : '#40e0d0'};
+          padding: 8px 16px;
+          border-radius: 20px;
+          cursor: pointer;
+          font-family: 'Outfit', sans-serif;
+          font-size: 0.9rem;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        ">
+          <span>✏️</span> Edge Mode (Stone)
         </button>
       </div>
       <div class="preview-container" style="margin-top: 10px; position: relative;">
@@ -422,6 +438,7 @@ function showPreview(src) {
       previewArea.innerHTML = '';
       document.getElementById('resultsArea').innerHTML = renderEmptyResults();
       isEnhanced = false;
+      isEdgeMode = false;
 
       // Show upload area again
       const uploadArea = document.getElementById('uploadArea');
@@ -441,6 +458,24 @@ function showPreview(src) {
       const originalSrc = img.getAttribute('data-original-src');
 
       // Reload original and reprocess
+      const tempImg = new Image();
+      tempImg.onload = async () => {
+        await processImage(tempImg);
+      };
+      tempImg.src = originalSrc;
+    });
+
+    // Edge Mode button - toggle edge detection for stone photos
+    document.getElementById('edgeModeBtn')?.addEventListener('click', async () => {
+      isEdgeMode = !isEdgeMode;
+      const btn = document.getElementById('edgeModeBtn');
+      btn.style.background = isEdgeMode ? 'rgba(64, 224, 208, 0.8)' : 'rgba(64, 224, 208, 0.1)';
+      btn.style.color = isEdgeMode ? '#1a1a1a' : '#40e0d0';
+
+      const img = document.getElementById('previewImage');
+      const originalSrc = img.getAttribute('data-original-src');
+
+      // Reload original and reprocess with edge detection
       const tempImg = new Image();
       tempImg.onload = async () => {
         await processImage(tempImg);
@@ -479,10 +514,18 @@ async function processImage(imageElement) {
     if (isEnhanced) {
       console.log("Applying stone enhancement (CLAHE + sharpening)...");
       processedImage = enhanceImage(imageElement);
+    }
 
-      // Update preview to show enhanced version
+    // 0b. Apply edge detection if enabled (for shadowy stone photos)
+    if (isEdgeMode) {
+      console.log("Applying edge detection (shadow-invariant)...");
+      processedImage = extractEdges(processedImage);
+    }
+
+    // Update preview to show processed version
+    if ((isEnhanced || isEdgeMode) && processedImage.toDataURL) {
       const previewImg = document.getElementById('previewImage');
-      if (previewImg && processedImage.toDataURL) {
+      if (previewImg) {
         previewImg.src = processedImage.toDataURL();
       }
     }
