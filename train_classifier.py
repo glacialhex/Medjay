@@ -11,7 +11,7 @@ import torch.onnx
 DATASET_PATH = 'datasets/Combined_Hieroglyphs/train'
 IMG_SIZE = (100, 100)
 BATCH_SIZE = 32
-EPOCHS = 10
+EPOCHS = 20  # Increased for augmented training
 MODEL_SAVE_PATH = 'app/public/hieroglyph_model.onnx'
 LABELS_SAVE_PATH = 'app/src/model_labels.json'
 
@@ -54,15 +54,26 @@ def train_model():
         print(f"Dataset not found at {DATASET_PATH}")
         return
 
-    # Data Transforms - Simple and accurate for clean images
-    data_transforms = transforms.Compose([
+    # Data Transforms - With MILD augmentation to handle real-world degraded images
+    # Key: augmentation should be enough to generalize, but not destroy the signal
+    train_transforms = transforms.Compose([
         transforms.Resize(IMG_SIZE),
-        transforms.ToTensor(), # Converts to [0, 1]
+        transforms.RandomRotation(10),  # Reduced from 15
+        transforms.RandomAffine(degrees=0, translate=(0.05, 0.05), scale=(0.95, 1.05)),  # Reduced
+        transforms.ColorJitter(brightness=0.2, contrast=0.3, saturation=0.1),  # Reduced
+        transforms.RandomApply([transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.0))], p=0.3),  # Only 30% of time
+        transforms.ToTensor(),
+    ])
+    
+    val_transforms = transforms.Compose([
+        transforms.Resize(IMG_SIZE),
+        transforms.ToTensor(),
     ])
 
-    # Load Dataset
-    full_dataset = datasets.ImageFolder(DATASET_PATH, transform=data_transforms)
-    class_names = full_dataset.classes
+    # Load Dataset - create two separate datasets with different transforms
+    # First get class names from a base dataset
+    base_dataset = datasets.ImageFolder(DATASET_PATH, transform=val_transforms)
+    class_names = base_dataset.classes
     print(f"Found {len(class_names)} classes.")
     
     # Save labels
@@ -70,10 +81,20 @@ def train_model():
         json.dump(class_names, f)
     print(f"Saved labels to {LABELS_SAVE_PATH}")
 
-    # Split Train/Val
-    train_size = int(0.8 * len(full_dataset))
-    val_size = len(full_dataset) - train_size
-    train_dataset, val_dataset = torch.utils.data.random_split(full_dataset, [train_size, val_size])
+    # Split indices first, then create datasets with appropriate transforms
+    total_size = len(base_dataset)
+    train_size = int(0.8 * total_size)
+    val_size = total_size - train_size
+    
+    # Get random indices
+    indices = torch.randperm(total_size).tolist()
+    train_indices = indices[:train_size]
+    val_indices = indices[train_size:]
+    
+    # Create augmented training dataset
+    train_full_dataset = datasets.ImageFolder(DATASET_PATH, transform=train_transforms)
+    train_dataset = torch.utils.data.Subset(train_full_dataset, train_indices)
+    val_dataset = torch.utils.data.Subset(base_dataset, val_indices)
 
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
