@@ -73,8 +73,40 @@ def train_model():
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
     
+    # Custom transform to simulate stone-texture photos
+    class StonifyTransform:
+        """Simulates photos of hieroglyphs carved in stone"""
+        def __init__(self, p=0.5):
+            self.p = p
+        
+        def __call__(self, img):
+            import random
+            from PIL import ImageFilter, ImageEnhance
+            
+            if random.random() > self.p:
+                return img
+            
+            # Random contrast reduction (0.3 to 0.7)
+            contrast = random.uniform(0.3, 0.7)
+            img = ImageEnhance.Contrast(img).enhance(contrast)
+            
+            # Random blur (radius 1-3)
+            blur_radius = random.uniform(0.5, 2.5)
+            img = img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+            
+            # Reduce color saturation (stone is grayish)
+            color = random.uniform(0.2, 0.5)
+            img = ImageEnhance.Color(img).enhance(color)
+            
+            # Random brightness adjustment
+            brightness = random.uniform(0.7, 1.3)
+            img = ImageEnhance.Brightness(img).enhance(brightness)
+            
+            return img
+    
     train_transforms = transforms.Compose([
         transforms.Resize(IMG_SIZE),
+        StonifyTransform(p=0.5),  # 50% chance of stone-like degradation
         transforms.RandomRotation(15),
         transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)),
         transforms.ColorJitter(brightness=0.2, contrast=0.2),
